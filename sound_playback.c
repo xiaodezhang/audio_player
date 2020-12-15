@@ -134,33 +134,40 @@ static void music_write(void* music){
     FILE *f = NULL;
     char *filename;
 
+    int finished = 1;
+    snd_pcm_sframes_t delayp;
+    struct timespec tstart = {0,0}, tend = {0,0};
+    int pause_time;
+
 
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGTERM);
     pthread_sigmask(SIG_BLOCK, &mask, &oldmask);
 
+    /*thread loop*/
     while(1){
         if(m->type == PLAY_TYPE_SINGLE){
+            /*signle music file*/
             while(1){
-                filename = m->list[m->current];
-                set_param((const char*)filename, &sp);
-                f = fopen(filename, "rb");
-                if(!f)
-                    return -1;
-                buff_size = sp.frames * sp.channels * 2 /* 2 -> sample size */;
-                printf("buff size:%d, frames:%d, channels:%d\n", buff_size, sp.frames, sp.channels);
-                buff = (char *) malloc(buff_size);
-                if(!buff){
-                    printf("memory error\n");
-                    fclose(f);
-                    return;
+                if(finished){
+                    filename = m->list[m->current];
+                    set_param((const char*)filename, &sp);
+                    f = fopen(filename, "rb");
+                    if(!f)
+                        return -1;
+                    buff_size = sp.frames * sp.channels * 2 /* 2 -> sample size */;
+                    printf("buff size:%d, frames:%d, channels:%d\n", buff_size, sp.frames, sp.channels);
+                    buff = (char *) malloc(buff_size);
+                    if(!buff){
+                        printf("memory error\n");
+                        fclose(f);
+                        return;
+                    }
+                    clock_gettime(CLOCK_MONOTONIC, &tstart);
+                    pause_time = 0;
                 }
-                int read_num = 0;
-                int play_sec = 0;
-                snd_pcm_sframes_t delayp;
-                struct timespec tstart = {0,0}, tend = {0,0};
-                clock_gettime(CLOCK_MONOTONIC, &tstart);
+
                 while(1){
                     pthread_mutex_lock(&lock);
                     music_state = g_music_state;
@@ -193,9 +200,10 @@ static void music_write(void* music){
                                 fclose(f);
                                 f = NULL;
                             }
-                         sleep(1);
-                         continue;
                         }
+                        sleep(1);
+                        ++pause_time;
+                        continue;
                     }
 
                     size_t n = fread(buff, 1, buff_size, f);
@@ -223,48 +231,27 @@ static void music_write(void* music){
 
             printf("finished\n");
             /*snd_pcm_drain(sp.pcm_handle);*/
-            for(int i = sp.seconds-time_diff; i > 0; --i){
+            for(int i = pause_time+sp.seconds-time_diff; i > 0; --i){
                 pthread_mutex_lock(&lock);
                 music_state = g_music_state;
                 pthread_mutex_unlock (&lock);
 
-                if(music_state == MUSIC_PAUSED && snd_pcm_state(sp.pcm_handle) != SND_PCM_STATE_SETUP){
-                    int ret;
-                    ret = snd_pcm_delay(sp.pcm_handle, &delayp);
-                    printf("delay:%d\n", delayp);
-                    if(ret != 0){
-                        printf("pcm delay failed, %s\n", snd_strerror(ret));
-                    }
-                    ret = snd_pcm_drop(sp.pcm_handle);
-                    if(ret != 0){
-                        printf("drop faild:%s\n", snd_strerror(ret));
-                    }
-                    if(f){
-                        fclose(f);
-                        f = NULL;
-                    }
+                if(music_state == MUSIC_PAUSED){
+                    finished = 0;
+                    break;
                 }
+
                 if(music_state == MUSIC_PLAYING && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP)
                     break;
                 sleep(1);
             }
-#if 0
-            while(1){
-                if(music_state == MUSIC_PLAYING)
-                    break;
-                sleep(1);
-            }
-#endif
-            /*while(1){*/
-                /*if(snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP)*/
-                    /*break;*/
-                /*printf("state3:%d\n",snd_pcm_state(sp.pcm_handle));*/
-                /*sleep(1);*/
-            /*}*/
             printf("state:%d\n", snd_pcm_state(sp.pcm_handle));
             printf("drain\n");
-            snd_pcm_close(sp.pcm_handle);
-            free(buff);
+            if(music_state != MUSIC_PAUSED){
+                snd_pcm_close(sp.pcm_handle);
+                free(buff);
+                finished = 1;
+            }
             if(f){
                 fclose(f);
                 f = NULL;
@@ -546,14 +533,15 @@ int main(int argc, char **argv) {
     /*music_play();*/
     int i= 0;
     while(++i){
+
+       if(i == 3){
+           printf("3333333\n");
+           music_pause();
+       }
 #if 1
        if(i == 7){
            music_play();
            printf("7777777777777\n");
-       }
-       if(i == 3){
-           printf("3333333\n");
-           music_pause();
        }
 #if 1
        if(i  == 5){
@@ -563,6 +551,10 @@ int main(int argc, char **argv) {
        if(i == 10){
            printf("10101010101010\n");
            music_pause();
+       }
+       if(i == 12){
+           printf("12\n");
+           music_play();
        }
 #endif
 #endif
