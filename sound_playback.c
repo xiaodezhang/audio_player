@@ -66,6 +66,7 @@ typedef struct{
 	snd_pcm_uframes_t frames;
     short int channels;
     int seconds;
+    int avg_bytes_per_sec;
 }SoundParam;
 /* wav音频头部格式 */
 typedef struct _wave_pcm_hdr
@@ -86,6 +87,13 @@ typedef struct _wave_pcm_hdr
 	char            data[4];                // = "data";
 	int				data_size;              // = 纯数据长度 : FileSize - 44 
 } wave_pcm_hdr;
+
+void file_close(FILE *file){
+    if(file){
+        fclose(file);
+        file = NULL;
+    }
+}
 
 /*0:music player 1:audio player*/
 int audio_play(int playerid, const char *filename){
@@ -123,6 +131,177 @@ static void check_pause(){
 }
 #endif
 
+static MUSIC_STATE music_state_check(){
+
+    MUSIC_STATE music_state;
+
+    pthread_mutex_lock(&lock);
+    music_state = g_music_state;
+    pthread_mutex_unlock(&lock);
+
+    return music_state;
+}
+
+static void music_state_set(MUSIC_STATE music_state){
+
+    pthread_mutex_lock(&lock);
+    g_music_state = music_state;
+    pthread_mutex_unlock(&lock);
+}
+
+static int get_music_index(MUSIC_STATE music_state,int max_index, int cm){
+
+    if(music_state == MUSIC_NEXT){
+        if(cm == max_index)
+            cm = 0;
+        else
+            ++cm;
+    }else if(music_state == MUSIC_PREVIOUS){
+        if(cm == 0)
+            cm = max_index;
+        else
+            --cm;
+    }
+    return cm;
+}
+
+static int music_sequence_play(Music* music){
+
+    int cm;  /*current music id*/
+    int ret;
+    char *filename;
+    snd_pcm_sframes_t delayp = 0;
+    SoundParam sp;
+    FILE *file;
+    int buff_size;
+    char *buff;
+    MUSIC_STATE music_state;
+    int finished = 1;
+
+    cm = music->current;
+
+    /*traverse the music list repeatly*/
+    while(1){
+        if(finished){
+            /*the previous file written finished */
+            filename = music->list[cm];
+
+            set_param(filename, &sp);
+            if((file = fopen(filename, "rb")) == NULL){
+                printf("open file failed, %s\n", strerror(errno));
+                return;
+            }
+            buff_size = sp.frames * sp.channels *2;
+            if((buff = malloc(buff_size)) == NULL){
+                printf("memory error:%s\n", strerror(errno));
+                fclose(file);
+            }
+        }
+        /*file read loop*/
+        while(1){
+            music_state = music_state_check();
+            if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
+
+                /*drop all data, play the next music*/
+                ret = snd_pcm_drop(sp.pcm_handle);
+                if(ret != 0)
+                    printf("drop faild:%s\n", snd_strerror(ret));
+                file_close(file);
+                cm = get_music_index(music_state, music->num-1, cm);
+                break;
+
+            } else if(music_state == MUSIC_PLAYING
+                        && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP){
+
+                /*remaing paused state, open the file for writing.*/
+                if((file = fopen(filename, "rb")) == NULL){
+                    printf("open file failed, %s\n", strerror(errno));
+                    break;
+                }
+                fseek(file, delayp, SEEK_SET);
+
+            } else if(music_state == MUSIC_PAUSED){
+                if(snd_pcm_state(sp.pcm_handle) != SND_PCM_STATE_SETUP){
+
+                    /*save the delay, drop all data, we will resume when music state is MUSCI_PLAYING*/
+                    if((ret = snd_pcm_delay(sp.pcm_handle, &delayp)) != 0){
+                        printf("Pcm delay failed, %s\n", snd_strerror(ret));
+                    }
+
+                    if((ret = snd_pcm_drop(sp.pcm_handle)) != 0){
+                        printf("Drop pcm failed, %s\n", snd_strerror(ret));
+                    }
+                    file_close(file);
+                }
+                /*keep sleeping untile the music state changed to MUSIC_PLAYING*/
+                sleep(1);
+                continue;
+            }
+
+            /*we read the file data now*/
+            size_t n = fread(buff, 1, buff_size, file);
+            if(n != buff_size){
+                if(ferror(file) != 0){
+                    printf("read file error:%s\n", strerror(errno));
+                    break;
+                }
+            }
+
+            /*write the date to the device*/
+            if ((ret = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
+                printf("XRUN.\n");
+                snd_pcm_prepare(sp.pcm_handle);
+            } else if (ret < 0) {
+                printf("ERROR. Can't write to PCM device. %s\n", snd_strerror(ret));
+            }
+            if(feof(file) != 0){
+                break;
+            }
+        }
+
+        if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
+            music_state_set(MUSIC_PLAYING);
+            continue;
+        }
+
+        /*we should have some cahce frames on the device to output.*/
+        /*Wait until the device drained.*/
+        if((ret = snd_pcm_delay(sp.pcm_handle, &delayp)) != 0){
+            printf("Pcm delay failed, %s\n", snd_strerror(ret));
+        }
+
+
+        int delay_sec = delayp / sp.avg_bytes_per_sec;
+
+        for(int i = sp.seconds-delay_sec; i > 0; --i){
+
+            music_state = music_state_check();
+
+            if(music_state == MUSIC_PAUSED){
+                /*do nothing, enter the reading data loop again.Note that do not open a new file*/
+                finished = 0;
+                break;
+            }
+            if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
+                /*drop all data, play the next music*/
+                ret = snd_pcm_drop(sp.pcm_handle);
+                if(ret != 0)
+                    printf("drop faild:%s\n", snd_strerror(ret));
+                file_close(file);
+                cm = get_music_index(music_state, music->num-1, cm);
+                music_state_set(MUSIC_PLAYING);
+                break;
+            }
+        }
+        file_close(file);
+        if(music_state != MUSIC_PAUSED){
+            snd_pcm_close(sp.pcm_handle);
+            free(buff);
+            finished = 1;
+        }
+    }
+}
+
 static void music_write(void* music){
 
     int buff_size;
@@ -131,7 +310,7 @@ static void music_write(void* music){
     unsigned int pcm;
     MUSIC_STATE music_state;
 
-	sigset_t mask, oldmask;
+    sigset_t mask, oldmask;
     Music *m = music;
     FILE *f = NULL;
     char *filename;
@@ -232,43 +411,43 @@ static void music_write(void* music){
                     }
                 }
 
-            clock_gettime(CLOCK_MONOTONIC, &tend);
-            /*printf("time differ:%d\n",tend.tv_sec-tstart.tv_sec);*/
-            int time_diff = tend.tv_sec-tstart.tv_sec;
+                clock_gettime(CLOCK_MONOTONIC, &tend);
+                /*printf("time differ:%d\n",tend.tv_sec-tstart.tv_sec);*/
+                int time_diff = tend.tv_sec-tstart.tv_sec;
 
-            /*snd_pcm_drain(sp.pcm_handle);*/
-            for(int i = pause_time+sp.seconds-time_diff+2; i > 0; --i){
-                pthread_mutex_lock(&lock);
-                music_state = g_music_state;
-                pthread_mutex_unlock (&lock);
+                /*snd_pcm_drain(sp.pcm_handle);*/
+                for(int i = pause_time+sp.seconds-time_diff+2; i > 0; --i){
+                    pthread_mutex_lock(&lock);
+                    music_state = g_music_state;
+                    pthread_mutex_unlock (&lock);
 
-                if(music_state == MUSIC_PAUSED){
-                    finished = 0;
-                    break;
+                    if(music_state == MUSIC_PAUSED){
+                        finished = 0;
+                        break;
+                    }
+
+                    if(music_state == MUSIC_PLAYING && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP){
+                        break;
+                    }
+                    sleep(1);
                 }
-
-                if(music_state == MUSIC_PLAYING && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP){
-                    break;
+                if(music_state != MUSIC_PAUSED){
+                    snd_pcm_close(sp.pcm_handle);
+                    free(buff);
+                    finished = 1;
                 }
-                sleep(1);
+                if(f){
+                    fclose(f);
+                    f = NULL;
+                }
             }
-            if(music_state != MUSIC_PAUSED){
-                snd_pcm_close(sp.pcm_handle);
-                free(buff);
-                finished = 1;
-            }
-            if(f){
-                fclose(f);
-                f = NULL;
-            }
-          }
 
         }
 
 
         if(m->type == PLAY_TYPE_RANDOM){
             for (int i = 0; i < m->num; i++) {
-                
+
             }
         }
         if(m->type == PLAY_TYPE_SEQUENCE){
@@ -393,55 +572,55 @@ static void music_write(void* music){
                     }
                 }
 
-            clock_gettime(CLOCK_MONOTONIC, &tend);
-            /*printf("time differ:%d\n",tend.tv_sec-tstart.tv_sec);*/
-            int time_diff = tend.tv_sec-tstart.tv_sec;
+                clock_gettime(CLOCK_MONOTONIC, &tend);
+                /*printf("time differ:%d\n",tend.tv_sec-tstart.tv_sec);*/
+                int time_diff = tend.tv_sec-tstart.tv_sec;
 
-            /*snd_pcm_drain(sp.pcm_handle);*/
-            for(int i = pause_time+sp.seconds-time_diff+2; i > 0; --i){
-                pthread_mutex_lock(&lock);
-                music_state = g_music_state;
-                pthread_mutex_unlock (&lock);
-
-                if(music_state == MUSIC_PAUSED){
-                    finished = 0;
-                    break;
-                }
-                if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
-                    int ret;
-                    ret = snd_pcm_drop(sp.pcm_handle);
-                    if(ret != 0){
-                        printf("drop faild:%s\n", snd_strerror(ret));
-                    }
-                    if(f){
-                        fclose(f);
-                        f = NULL;
-                    }
-                    if(music_state == MUSIC_PREVIOUS)
-                        direction = 0;
-                    else
-                        direction = 1;
+                /*snd_pcm_drain(sp.pcm_handle);*/
+                for(int i = pause_time+sp.seconds-time_diff+2; i > 0; --i){
                     pthread_mutex_lock(&lock);
-                    g_music_state = MUSIC_PLAYING;
+                    music_state = g_music_state;
                     pthread_mutex_unlock (&lock);
-                    break;
-                }
 
-                if(music_state == MUSIC_PLAYING && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP){
-                    break;
+                    if(music_state == MUSIC_PAUSED){
+                        finished = 0;
+                        break;
+                    }
+                    if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
+                        int ret;
+                        ret = snd_pcm_drop(sp.pcm_handle);
+                        if(ret != 0){
+                            printf("drop faild:%s\n", snd_strerror(ret));
+                        }
+                        if(f){
+                            fclose(f);
+                            f = NULL;
+                        }
+                        if(music_state == MUSIC_PREVIOUS)
+                            direction = 0;
+                        else
+                            direction = 1;
+                        pthread_mutex_lock(&lock);
+                        g_music_state = MUSIC_PLAYING;
+                        pthread_mutex_unlock (&lock);
+                        break;
+                    }
+
+                    if(music_state == MUSIC_PLAYING && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP){
+                        break;
+                    }
+                    sleep(1);
                 }
-                sleep(1);
+                if(music_state != MUSIC_PAUSED){
+                    snd_pcm_close(sp.pcm_handle);
+                    free(buff);
+                    finished = 1;
+                }
+                if(f){
+                    fclose(f);
+                    f = NULL;
+                }
             }
-            if(music_state != MUSIC_PAUSED){
-                snd_pcm_close(sp.pcm_handle);
-                free(buff);
-                finished = 1;
-            }
-            if(f){
-                fclose(f);
-                f = NULL;
-            }
-          }
         }
 
     }
@@ -649,6 +828,7 @@ int set_param(const char *filename, SoundParam* sp){
     sp->channels = channels;
     sp->pcm_handle = pcm_handle;
     sp->seconds = seconds;
+    sp->avg_bytes_per_sec = avg_bytes_per_sec;
     printf("set param, frames:%d\n", sp->frames);
     printf("can pause:%d\n", snd_pcm_hw_params_can_pause(params));
 }
