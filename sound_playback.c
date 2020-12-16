@@ -689,8 +689,55 @@ int music_next(){
     return 0;
 }
 
+void SetAlsaMasterVolume(long volume)
+{
+    long min, maxl;
+    snd_mixer_t *handle;
+    snd_mixer_selem_id_t *sid;
+    const char *card = "default";
+    const char *selem_name = "Master";
+
+    snd_mixer_open(&handle, 0);
+    snd_mixer_attach(handle, card);
+    snd_mixer_selem_register(handle, NULL, NULL);
+    snd_mixer_load(handle);
+
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_index(sid, 0);
+    snd_mixer_selem_id_set_name(sid, selem_name);
+    snd_mixer_elem_t* elem = snd_mixer_find_selem(handle, sid);
+
+    snd_mixer_selem_get_playback_volume_range(elem, &min, &maxl);
+    printf("min:%d,max:%d\n", min, maxl);
+    snd_mixer_selem_set_playback_volume_all(elem, volume * (maxl-min) / 100);
+    printf("min:%d,max:%d\n", min, maxl);
+    printf("update volume\n");
+
+    snd_mixer_close(handle);
+}
+
+long g_volume = 100;
+void toggle_volume(int volume){
+    
+    if(g_volume+volume > 100)
+        g_volume = 100;
+    else if(g_volume+volume < 0)
+        g_volume = 0;
+    else
+        g_volume = g_volume+volume;
+    SetAlsaMasterVolume(g_volume);
+}
+
+void volume_init(long volume){
+    SetAlsaMasterVolume(volume);
+    g_volume = volume;
+}
 
 int main(int argc, char **argv) {
+
+    volume_init(100);
+    toggle_volume(-20);
+    return 0;
 
     if(pthread_mutex_init(&lock, NULL) != 0){
         printf("mutex init failed\n");
