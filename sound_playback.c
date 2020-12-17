@@ -88,6 +88,7 @@ typedef struct _wave_pcm_hdr
 	int				data_size;              // = 纯数据长度 : FileSize - 44 
 } wave_pcm_hdr;
 
+typedef int (*NEXT_MUSIC)(MUSIC_STATE, int , int);
 void file_close(FILE **file){
     if(*file){
         fclose(*file);
@@ -149,7 +150,21 @@ static void music_state_set(MUSIC_STATE music_state){
     pthread_mutex_unlock(&lock);
 }
 
-static int get_music_index(MUSIC_STATE music_state,int max_index, int cm){
+static int next_music_random(MUSIC_STATE music_state,int max_index, int cm){
+
+    struct timespec ttime = {0, 0};
+    clock_gettime(CLOCK_MONOTONIC, &ttime);
+    unsigned int seed = ttime.tv_sec+ttime.tv_nsec;
+    srandom(seed);
+    return max_index*random()/RAND_MAX;
+}
+
+static int next_music_single(MUSIC_STATE music_state,int max_index, int cm){
+
+    return cm;
+}
+
+static int next_music_sequence(MUSIC_STATE music_state,int max_index, int cm){
 
     if(music_state == MUSIC_NEXT || music_state == MUSIC_PLAYING){
         if(cm == max_index)
@@ -165,7 +180,8 @@ static int get_music_index(MUSIC_STATE music_state,int max_index, int cm){
     return cm;
 }
 
-static int music_sequence_play(Music* music){
+
+static int music_play_internal(Music *music,NEXT_MUSIC next_music){
 
     int cm;  /*current music id*/
     int ret;
@@ -258,7 +274,7 @@ static int music_sequence_play(Music* music){
                 }
             }
 
-            printf("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));
+            /*printf("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));*/
             /*write the date to the device*/
             if ((pcm = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
                 printf("XRUN.\n");
@@ -294,7 +310,7 @@ static int music_sequence_play(Music* music){
             if(music_state == MUSIC_PAUSED){
                 /*do nothing, enter the reading data loop again.Note that do not open a new file*/
                 finished = 0;
-                break;
+                goto next_file;
             }
             if(music_state == MUSIC_NEXT || music_state == MUSIC_PREVIOUS){
                 /*drop all data, play the next music*/
@@ -312,11 +328,17 @@ next_file:
         file_close(&file);
         if(music_state != MUSIC_PAUSED){
             snd_pcm_close(sp.pcm_handle);
-            cm = get_music_index(music_state, music->num-1, cm);
+            cm = next_music(music_state, music->num-1, cm);
             free(buff);
             finished = 1;
         }
     }
+    
+}
+
+static int music_sequence_play(Music *music){
+
+    music_play_internal(music, next_music_sequence);
 }
 
 static void music_write(void* m){
@@ -969,21 +991,23 @@ int main(int argc, char **argv) {
     /*music_play();*/
     int i= 0;
     while(++i){
-        /*if(i == 3 || i == 10){*/
+#if 0
+        if(i == 3 || i == 10){
 
-            /*music_next();*/
-        /*}*/
+            music_next();
+        }
+#endif
 
 #if 1
-       if(i == 3){
+       if(i == 7){
            printf("3333333\n");
            music_pause();
        }
-       if(i == 7){
+       if(i == 20){
            music_play();
            printf("7777777777777\n");
        }
-#if 0
+#if 1
        if(i  == 5){
            printf("555555\n");
            music_play();
