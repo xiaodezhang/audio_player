@@ -19,7 +19,12 @@
 #define PCM_DEVICE "default"
 
 pthread_mutex_t lock;
+pthread_mutex_t audio_lock;
+
 long g_volume = 100;
+pthread_t g_music_pt;
+pthread_t g_audio_pt;
+int g_current_music;
 
 typedef enum {
     MUSIC_PAUSED = 0,
@@ -36,6 +41,13 @@ typedef struct{
     int seconds;
     int avg_bytes_per_sec;
 }SoundParam;
+
+typedef struct{
+    char filename[256];
+    AUDIO_FINISHED_CALLBACK call;
+} Audio;
+
+Audio g_audio = {{0}, NULL};
 
 /* wav音频头部格式 */
 typedef struct _wave_pcm_hdr
@@ -190,6 +202,13 @@ static void music_state_set(MUSIC_STATE music_state){
     pthread_mutex_unlock(&lock);
 }
 
+static void current_music_set(int cm){
+
+    pthread_mutex_lock(&lock);
+    g_current_music = cm;
+    pthread_mutex_unlock(&lock);
+}
+
 static int next_music_random(MUSIC_STATE music_state,int max_index, int cm){
 
     struct timespec ttime = {0, 0};
@@ -235,6 +254,9 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
     int finished = 1;
 
     cm = music->current;
+    current_music_set(cm);
+    if(music->call)
+        music->call(cm);
 
     /*traverse the music list repeatly*/
     while(1){
@@ -362,9 +384,13 @@ next_file:
         file_close(&file);
         if(music_state != MUSIC_PAUSED){
             snd_pcm_close(sp.pcm_handle);
-            cm = next_music(music_state, music->num-1, cm);
             free(buff);
             finished = 1;
+
+            cm = next_music(music_state, music->num-1, cm);
+            current_music_set(cm);
+            if(music->call)
+                music->call(cm);
         }
     }
     
@@ -403,21 +429,92 @@ static void music_write(void* m){
     }
 }
 
-static void audio_write(void* filename){
 
+static void audio_write(void* arg){
+
+    SoundParam sp;
+    int buff_size;
+    FILE *file;
+    char *buff;
+    snd_pcm_sframes_t pcm;
+
+    Audio audio;
+
+    while(1){
+
+        pthread_mutex_lock(&audio_lock);
+        strcpy(audio.filename, g_audio.filename);
+        audio.call = g_audio.call;
+        pthread_mutex_unlock(&audio_lock);
+
+        if(audio.filename[0] == 0) {
+            sleep(1);
+            continue;
+        }
+
+        set_param(audio.filename, &sp);
+
+        if((file = fopen(audio.filename, "rb")) == NULL){
+            printf("open file failed, %s\n", strerror(errno));
+        }
+        buff_size = sp.frames * sp.channels *2;
+        if((buff = malloc(buff_size)) == NULL){
+            printf("memory error:%s\n", strerror(errno));
+            file_close(&file);
+            exit(-1);
+        }
+
+        while(1){
+
+            /*we read the file data now*/
+            size_t n = fread(buff, 1, buff_size, file);
+            if(n != buff_size){
+                if(ferror(file) != 0){
+                    printf("read file error:%s\n", strerror(errno));
+                }
+            }
+
+            /*printf("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));*/
+            /*write the date to the device*/
+            if ((pcm = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
+                printf("XRUN.\n");
+                snd_pcm_prepare(sp.pcm_handle);
+            } else if (pcm < 0) {
+                printf("ERROR. Can't write to PCM device. %s\n", snd_strerror(pcm));
+            }
+            if(feof(file) != 0){
+                printf("eof\n");
+                break;
+            }
+        }
+
+        snd_pcm_drain(sp.pcm_handle);
+
+        file_close(&file);
+        snd_pcm_close(sp.pcm_handle);
+        free(buff);
+
+        pthread_mutex_lock(&audio_lock);
+        g_audio.filename[0] = 0;
+        g_audio.call = NULL;
+        pthread_mutex_unlock(&audio_lock);
+
+        if(audio.call)
+            audio.call();
+
+    }
 }
 
 int music_init(Music* music){
 
     int ret;
-    pthread_t music_pt;
 
     if(pthread_mutex_init(&lock, NULL) != 0){
         printf("mutex init failed\n");
         return -1;
     }
 
-    if((ret = pthread_create(&music_pt, NULL, music_write, music)) != 0){
+    if((ret = pthread_create(&g_music_pt, NULL, music_write, music)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
     }
@@ -428,18 +525,43 @@ int music_destory(){
     /*! TODO: mutex destory and thread exit
      *
      */
+
     pthread_mutex_destroy(&lock);
+    pthread_cancel(g_music_pt);
 }
 
-int audio_play_init(const char *filename){
+int audio_play(const char *filename, AUDIO_FINISHED_CALLBACK call){
+
+
+    pthread_mutex_lock(&audio_lock);
+    strcpy(&(g_audio.filename), filename);
+    g_audio.call = call;
+    pthread_mutex_unlock(&audio_lock);
+
+    return 0;
+}
+
+int audio_init(){
 
     int ret;
 
-    pthread_t audio_pt;
-    if((ret = pthread_create(&audio_pt, NULL, audio_write, filename)) != 0){
+
+    if(pthread_mutex_init(&audio_lock, NULL) != 0){
+        printf("mutex init failed\n");
+        return -1;
+    }
+
+    if((ret = pthread_create(&g_audio_pt, NULL, audio_write, NULL)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
     }
+    return 0;
+}
+
+int audio_destroy(){
+
+    pthread_mutex_destroy(&audio_lock);
+    pthread_cancel(g_audio_pt);
     return 0;
 }
 
@@ -454,7 +576,6 @@ int music_pause(){
     pthread_mutex_unlock(&lock);
     return 0;
 }
-
 
 int music_play(){
 
@@ -481,6 +602,17 @@ int music_previous(){
     g_music_state = MUSIC_PREVIOUS;
     pthread_mutex_unlock(&lock);
     return 0;
+}
+
+int get_current_music(){
+
+    int c;
+
+    pthread_mutex_lock(&lock);
+    c = g_current_music;
+    pthread_mutex_unlock(&lock);
+
+    return c;
 }
 
 static void SetAlsaMasterVolume(long volume)
