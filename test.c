@@ -51,9 +51,10 @@ int main(int argc, char **argv) {
     music.list[2] = malloc(strlen(file_list[2])+1);
     strcpy(music.list[2], file_list[2]);
     music.num = 3;
-    music.current = 2;
+    music.current = 1;
     /*music.type = PLAY_TYPE_SINGLE;*/
-    music.type = PLAY_TYPE_SEQUENCE;
+    /*music.type = PLAY_TYPE_SEQUENCE;*/
+    music.type = PLAY_TYPE_RANDOM;
     music.call = music_call;
 
     music_init(&music);

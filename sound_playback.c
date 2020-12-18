@@ -209,13 +209,24 @@ static void current_music_set(int cm){
     pthread_mutex_unlock(&lock);
 }
 
-static int next_music_random(MUSIC_STATE music_state,int max_index, int cm){
+static void random_init(MUSIC_STATE music_state,int max_index, int cm){
 
     struct timespec ttime = {0, 0};
     clock_gettime(CLOCK_MONOTONIC, &ttime);
     unsigned int seed = ttime.tv_sec+ttime.tv_nsec;
     srandom(seed);
-    return max_index*random()/RAND_MAX;
+    /*return max_index*random()/RAND_MAX;*/
+}
+
+static int next_music_random(MUSIC_STATE music_state,int max_index, int cm){
+
+    int rd;
+    random_init(music_state, max_index, cm);
+    while(1){
+        rd = max_index*random()/RAND_MAX;
+        if(rd != cm)
+            return rd;
+    }
 }
 
 static int next_music_single(MUSIC_STATE music_state,int max_index, int cm){
@@ -253,12 +264,13 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
     MUSIC_STATE music_state;
 
     cm = music->current;
-    current_music_set(cm);
-    if(music->call)
-        music->call(cm);
 
     /*traverse the music list repeatly*/
     while(1){
+
+        current_music_set(cm);
+        if(music->call)
+        music->call(cm);
 
         filename = music->list[cm];
         delayp = delayp_total = 0;
@@ -299,8 +311,6 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
 
             if(music_state == MUSIC_PAUSED){
                 if(snd_pcm_state(sp.pcm_handle) != SND_PCM_STATE_PAUSED){
-
-
                     if((ret = snd_pcm_pause(sp.pcm_handle, 1)) != 0){
                         printf("Pcm pause failed, %s\n", snd_strerror(ret));
                         /*! TODO: Todo description here
@@ -390,9 +400,6 @@ next_file:
         free(buff);
 
         cm = next_music(music_state, music->num-1, cm);
-        current_music_set(cm);
-        if(music->call)
-            music->call(cm);
     }
     
 }
