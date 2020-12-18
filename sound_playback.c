@@ -337,8 +337,7 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
 
         /*we should have some cahce frames on the device to output.*/
         /*Wait until the device drained.*/
-        int i = 0;
-        while(++i){
+        while(1){
 
             /*if(snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP)*/
                 /*break;*/

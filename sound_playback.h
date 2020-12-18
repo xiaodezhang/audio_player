@@ -7,8 +7,8 @@ typedef enum{
     PLAY_TYPE_SINGLE
 } MUSIC_PLAY_TYPE ;
 
-typedef (*MUSIC_START_CALLBACK)(int current_music);
-typedef (*AUDIO_FINISHED_CALLBACK)();
+typedef void (*MUSIC_START_CALLBACK)(int current_music);
+typedef void (*AUDIO_FINISHED_CALLBACK)();
 
 typedef struct{
     char **list;
