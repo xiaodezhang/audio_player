@@ -3,7 +3,10 @@
 
 #include "sound_playback.h"
 
-char *file_list[2] = {"/home/zhang_xiaode/ChillingMusic.wav", "/home/zhang_xiaode/tts_sample.wav"};
+char *file_list[3] = {"/home/zhang_xiaode/ChillingMusic.wav"
+    , "/home/zhang_xiaode/tts_sample.wav"
+        , "/home/zhang_xiaode/wav/4.wav"
+};
 void music_call(int cm){
 
     printf("current music :%d\n", cm);
@@ -14,7 +17,7 @@ void callback(){
     printf("call back\n");
 }
 void audio_call(){
-    audio_play(file_list[0], callback);
+    audio_play(file_list[2], callback);
 }
 
 void test_audio_play(){
@@ -27,8 +30,10 @@ void test_audio_play(){
 
 int main(int argc, char **argv) {
 
+#if 0
     test_audio_play();
     return 0;
+#endif
 #if 0
     volume_init(100);
     toggle_volume(-20);
@@ -36,10 +41,6 @@ int main(int argc, char **argv) {
 #endif
 
 #if 1
-    char *file_list[3] = {"/home/zhang_xiaode/ChillingMusic.wav"
-               , "/home/zhang_xiaode/tts_sample.wav"
-               , "/home/zhang_xiaode/wav/2.wav"
-    };
 
     Music music;
     music.list = malloc(sizeof(char*)*3);
@@ -47,8 +48,8 @@ int main(int argc, char **argv) {
     strcpy(music.list[0], file_list[0]);
     music.list[1] = malloc(strlen(file_list[1])+1);
     strcpy(music.list[1], file_list[1]);
-    music.list[2] = malloc(strlen(file_list[1])+1);
-    strcpy(music.list[2], file_list[1]);
+    music.list[2] = malloc(strlen(file_list[2])+1);
+    strcpy(music.list[2], file_list[2]);
     music.num = 3;
     music.current = 2;
     /*music.type = PLAY_TYPE_SINGLE;*/
@@ -59,6 +60,25 @@ int main(int argc, char **argv) {
     /*music_play();*/
     int i= 0;
     while(++i){
+        if(i == 30){
+            printf("202020202020\n");
+            music_pause();
+        }
+#if 1
+        if(i == 32){
+            printf("202020202020\n");
+            music_play();
+        }
+
+        if(i == 35){
+            printf("next\n");
+            music_next();
+        }
+        if(i == 40){
+            printf("next\n");
+            music_next();
+        }
+#endif
 #if 0
         if(i == 3 || i == 10){
 
@@ -66,14 +86,14 @@ int main(int argc, char **argv) {
         }
 #endif
 
-#if 1
+#if 0
        if(i == 7){
            printf("3333333\n");
            music_pause();
        }
        if(i == 20){
-           music_play();
            printf("7777777777777\n");
+           music_play();
        }
 #if 1
        if(i  == 5){
