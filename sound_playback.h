@@ -26,6 +26,7 @@ int music_pause();
 int music_next();
 int music_previous();
 int get_current_music();
+int music_play_type(MUSIC_PLAY_TYPE type);
 
 
 void volume_init(int volume);
@@ -34,6 +35,5 @@ void toggle_volume(int volume);
 int audio_init();
 int audio_play(const char *filename, AUDIO_FINISHED_CALLBACK call);
 int audio_destroy();
-
 
 #endif

@@ -25,6 +25,7 @@ long g_volume = 100;
 pthread_t g_music_pt;
 pthread_t g_audio_pt;
 int g_current_music;
+int g_music_play_type;
 
 typedef enum {
     MUSIC_PAUSED = 0,
@@ -250,8 +251,28 @@ static int next_music_sequence(MUSIC_STATE music_state,int max_index, int cm){
     return cm;
 }
 
+static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int cm){
 
-static int music_play_internal(Music *music,NEXT_MUSIC next_music){
+    int next_music;
+
+    switch (type) {
+        case PLAY_TYPE_RANDOM:
+            next_music = next_music_random(music_state, max_index, cm);
+            break;
+
+        case PLAY_TYPE_SINGLE:
+            next_music = next_music_single(music_state, max_index, cm);
+            break;
+
+        case PLAY_TYPE_SEQUENCE:
+            next_music = next_music_sequence(music_state, max_index, cm);
+            break;
+    }
+
+    return next_music;
+}
+
+static int music_play_internal(Music *music){
 
     int cm;  /*current music id*/
     int ret;
@@ -262,15 +283,17 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
     int buff_size;
     char *buff;
     MUSIC_STATE music_state;
+    int type;
 
     cm = music->current;
+    type = music->type;
 
     /*traverse the music list repeatly*/
     while(1){
 
         current_music_set(cm);
         if(music->call)
-        music->call(cm);
+            music->call(cm);
 
         filename = music->list[cm];
         delayp = delayp_total = 0;
@@ -299,7 +322,7 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
             } 
 
             if(music_state == MUSIC_PLAYING
-                        && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_PAUSED){
+                    && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_PAUSED){
 
                 if((ret = snd_pcm_pause(sp.pcm_handle, 0)) != 0){
                     printf("Pcm continue failed, %s\n", snd_strerror(ret));
@@ -350,7 +373,7 @@ static int music_play_internal(Music *music,NEXT_MUSIC next_music){
         while(1){
 
             /*if(snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_SETUP)*/
-                /*break;*/
+            /*break;*/
             if(snd_pcm_avail(sp.pcm_handle) < 0)
                 break;
 
@@ -399,28 +422,18 @@ next_file:
         snd_pcm_close(sp.pcm_handle);
         free(buff);
 
-        cm = next_music(music_state, music->num-1, cm);
+        pthread_mutex_lock(&lock);
+        type = g_music_play_type;
+        pthread_mutex_unlock(&lock);
+        cm = type_next_music(type, music_state, music->num-1, cm);
     }
+
     
-}
-
-static int music_sequence_play(Music *music){
-
-    music_play_internal(music, next_music_sequence);
-}
-
-static int music_random_play(Music *music){
-
-    music_play_internal(music, next_music_random);
-}
-
-static int music_signle_play(Music *music){
-
-    music_play_internal(music, next_music_single);
 }
 
 static void music_write(void* m){
     
+#if 0
     Music* music = m;
     switch (music->type) {
         case PLAY_TYPE_RANDOM:
@@ -435,8 +448,10 @@ static void music_write(void* m){
             music_sequence_play(music);
             break;
     }
-}
+#endif
 
+    music_play_internal((Music*)m);
+}
 
 static void audio_write(void* arg){
 
@@ -536,6 +551,17 @@ int music_destory(){
 
     pthread_mutex_destroy(&lock);
     pthread_cancel(g_music_pt);
+}
+
+int music_play_type(MUSIC_PLAY_TYPE type){
+
+    int type_i = (int)type;
+
+    pthread_mutex_lock(&lock);
+    g_music_play_type = type_i;
+    pthread_mutex_unlock(&lock);
+
+    return 0;
 }
 
 int audio_play(const char *filename, AUDIO_FINISHED_CALLBACK call){
@@ -662,4 +688,6 @@ void volume_init(int volume){
     SetAlsaMasterVolume(volume);
     g_volume = volume;
 }
+
+
 
