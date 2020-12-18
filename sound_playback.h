@@ -27,7 +27,9 @@ int music_next();
 int music_previous();
 int get_current_music();
 int music_play_type(MUSIC_PLAY_TYPE type);
+int music_speccify(int id);
 
+int update_music_list(const char** music_list, int num);
 
 void volume_init(int volume);
 void toggle_volume(int volume);

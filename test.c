@@ -43,14 +43,12 @@ int main(int argc, char **argv) {
 #if 1
 
     Music music;
-    music.list = malloc(sizeof(char*)*3);
-    music.list[0] = malloc(strlen(file_list[0])+1);
-    strcpy(music.list[0], file_list[0]);
-    music.list[1] = malloc(strlen(file_list[1])+1);
-    strcpy(music.list[1], file_list[1]);
-    music.list[2] = malloc(strlen(file_list[2])+1);
-    strcpy(music.list[2], file_list[2]);
     music.num = 3;
+    music.list = malloc(sizeof(char*)*music.num);
+    for (int i = 0; i < music.num; i++) {
+        music.list[i] = malloc(strlen(file_list[i])+1);
+        strcpy(music.list[i], file_list[i]);
+    }
     music.current = 1;
     /*music.type = PLAY_TYPE_SINGLE;*/
     /*music.type = PLAY_TYPE_SEQUENCE;*/
@@ -58,6 +56,10 @@ int main(int argc, char **argv) {
     music.call = music_call;
 
     music_init(&music);
+    for(int i = 0;i < music.num; ++i){
+        free(music.list[i]);
+    }
+    free(music.list);
     /*music_play();*/
     int i= 0;
     while(++i){

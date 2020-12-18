@@ -18,6 +18,9 @@
 
 #define PCM_DEVICE "default"
 
+int g_init_flag = 0;
+Music g_music;
+
 pthread_mutex_t lock;
 pthread_mutex_t audio_lock;
 
@@ -332,11 +335,12 @@ static int music_play_internal(void *m){
         filename = music->list[cm];
         delayp = delayp_total = 0;
 
+        /*printf("filename:%s\n", filename);*/
         set_param(filename, &sp);
         if((file = fopen(filename, "rb")) == NULL){
             printf("open file failed, %s\n", strerror(errno));
         }
-        buff_size = sp.frames * sp.channels *2;
+        buff_size = sp.frames * sp.channels * 2;
         if((buff = malloc(buff_size)) == NULL){
             printf("memory error:%s\n", strerror(errno));
             file_close(&file);
@@ -462,8 +466,6 @@ next_file:
         pthread_mutex_unlock(&lock);
         cm = type_next_music(type, music_state, music->num-1, cm);
     }
-
-    
 }
 
 static void audio_write(void* arg){
@@ -541,20 +543,64 @@ static void audio_write(void* arg){
     }
 }
 
+static int music_copy(Music *music_dst, Music *music_src){
+
+    if(!music_dst || !music_src){
+        return -1;
+    }
+    music_dst->num = music_src->num;
+    music_dst->list = malloc(sizeof(char*)*music_src->num);
+    if(!music_dst->list){
+        printf("memory error, %s", strerror(errno));
+        exit(-1);
+    }
+    for (int i = 0; i < music_dst->num; i++) {
+        music_dst->list[i] = malloc(strlen(music_src->list[i])+1);
+        if(!music_dst->list[i]){
+            printf("memory error, %s", strerror(errno));
+            exit(-1);
+        }
+        strcpy(music_dst->list[i], music_src->list[i]);
+    }
+    music_dst->type = music_src->type;
+    music_dst->call = music_src->call;
+
+    return 0;
+}
+
 int music_init(Music* music){
 
     int ret;
+
+    if(g_init_flag)
+        return -1;
+
+    if(music_copy(&g_music, music) != 0)
+        return -1;
 
     if(pthread_mutex_init(&lock, NULL) != 0){
         printf("mutex init failed\n");
         return -1;
     }
 
-    if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, music)) != 0){
+    if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, &g_music)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
     }
     return 0;
+}
+
+static void G_Music_destroy(){
+
+    for (int i = 0; i < g_music.num; i++) {
+        if(g_music.list[i]){
+            free(g_music.list[i]);
+            g_music.list[i] = NULL;
+        }
+    }
+    free(g_music.list);
+    g_music.num = 0;
+    g_music.call= NULL;
 }
 
 int music_destory(){
@@ -564,6 +610,8 @@ int music_destory(){
 
     pthread_mutex_destroy(&lock);
     pthread_cancel(g_music_pt);
+    g_init_flag = 0;
+    G_Music_destroy();
 }
 
 int music_play_type(MUSIC_PLAY_TYPE type){
@@ -667,6 +715,12 @@ int music_speccify(int id){
     /*check whether id is in the list*/
     set_music_specific(id);
     music_next();
+    return 0;
+}
+
+int update_music_list(const char** music_list, int num){
+
+    return 0;
 }
 
 static void SetAlsaMasterVolume(long volume)
@@ -708,6 +762,3 @@ void volume_init(int volume){
     SetAlsaMasterVolume(volume);
     g_volume = volume;
 }
-
-
-
