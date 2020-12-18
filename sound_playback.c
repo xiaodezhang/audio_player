@@ -26,6 +26,7 @@ pthread_t g_music_pt;
 pthread_t g_audio_pt;
 int g_current_music;
 int g_music_play_type;
+int g_music_specific;
 
 typedef enum {
     MUSIC_PAUSED = 0,
@@ -89,6 +90,26 @@ static MUSIC_STATE music_state_check(){
 
     return music_state;
 }
+
+static void set_music_specific(int music_specific){
+
+    pthread_mutex_lock(&lock);
+    g_music_specific = music_specific;
+    pthread_mutex_unlock(&lock);
+
+}
+
+static int get_music_specific(){
+
+    int music_specific;
+
+    pthread_mutex_lock(&lock);
+    music_specific = g_music_specific;
+    pthread_mutex_unlock(&lock);
+
+    return music_specific;
+}
+
 
 static int set_param(const char *filename, SoundParam* sp){
 
@@ -254,6 +275,15 @@ static int next_music_sequence(MUSIC_STATE music_state,int max_index, int cm){
 static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int cm){
 
     int next_music;
+    int music_specific;
+
+    music_specific = get_music_specific();
+
+    if(music_specific > 0){
+        next_music = music_specific;
+        set_music_specific(-1);
+        goto end;
+    }
 
     switch (type) {
         case PLAY_TYPE_RANDOM:
@@ -269,10 +299,12 @@ static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int
             break;
     }
 
+end:
+
     return next_music;
 }
 
-static int music_play_internal(Music *music){
+static int music_play_internal(void *m){
 
     int cm;  /*current music id*/
     int ret;
@@ -284,7 +316,9 @@ static int music_play_internal(Music *music){
     char *buff;
     MUSIC_STATE music_state;
     int type;
+    Music *music;
 
+    music = m;
     cm = music->current;
     type = music->type;
 
@@ -299,7 +333,8 @@ static int music_play_internal(Music *music){
         delayp = delayp_total = 0;
 
         set_param(filename, &sp);
-        if((file = fopen(filename, "rb")) == NULL){ printf("open file failed, %s\n", strerror(errno));
+        if((file = fopen(filename, "rb")) == NULL){
+            printf("open file failed, %s\n", strerror(errno));
         }
         buff_size = sp.frames * sp.channels *2;
         if((buff = malloc(buff_size)) == NULL){
@@ -431,28 +466,6 @@ next_file:
     
 }
 
-static void music_write(void* m){
-    
-#if 0
-    Music* music = m;
-    switch (music->type) {
-        case PLAY_TYPE_RANDOM:
-            music_random_play(music);
-            break;
-
-        case PLAY_TYPE_SINGLE:
-            music_signle_play(music);
-            break;
-
-        case PLAY_TYPE_SEQUENCE:
-            music_sequence_play(music);
-            break;
-    }
-#endif
-
-    music_play_internal((Music*)m);
-}
-
 static void audio_write(void* arg){
 
     SoundParam sp;
@@ -537,7 +550,7 @@ int music_init(Music* music){
         return -1;
     }
 
-    if((ret = pthread_create(&g_music_pt, NULL, music_write, music)) != 0){
+    if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, music)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
     }
@@ -647,6 +660,13 @@ int get_current_music(){
     pthread_mutex_unlock(&lock);
 
     return c;
+}
+
+int music_speccify(int id){
+
+    /*check whether id is in the list*/
+    set_music_specific(id);
+    music_next();
 }
 
 static void SetAlsaMasterVolume(long volume)
