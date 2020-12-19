@@ -51,23 +51,33 @@ int main(int argc, char **argv) {
     }
     music.current = 1;
     /*music.type = PLAY_TYPE_SINGLE;*/
-    /*music.type = PLAY_TYPE_SEQUENCE;*/
-    music.type = PLAY_TYPE_RANDOM;
+    music.type = PLAY_TYPE_SEQUENCE;
+    /*music.type = PLAY_TYPE_RANDOM;*/
     music.call = music_call;
 
     music_init(&music);
-    for(int i = 0;i < music.num; ++i){
-        free(music.list[i]);
-    }
-    free(music.list);
+    /*for(int i = 0;i < music.num; ++i){*/
+        /*free(music.list[i]);*/
+    /*}*/
     /*music_play();*/
     int i= 0;
     while(++i){
+        if(i == 10){
+            music_speccify(2);
+            printf("current music:%d\n",get_current_music());
+
+            music_speccify(0);
+            printf("current music:%d\n",get_current_music());
+        }
+        if(i == 15){
+            music_play_type(PLAY_TYPE_SINGLE);
+            printf("current music:%d\n", get_music_play_type());
+        }
+#if 0
         if(i == 30){
             printf("202020202020\n");
             music_pause();
         }
-#if 1
         if(i == 32){
             printf("202020202020\n");
             music_play();
@@ -80,6 +90,19 @@ int main(int argc, char **argv) {
         if(i == 40){
             printf("next\n");
             music_next();
+        }
+        if(i == 50){
+            printf("5050505050\n");
+            music_destory();
+#if 0
+            free(music.list[1]);
+            char *wav = "/home/zhang_xiaode/wav/3.wav";
+            music.list[1] = malloc(strlen(wav)+1);
+            strcpy(music.list[1], wav);
+            music.current = 0;
+            printf("music:%s\n", music.list[1]);
+#endif
+            music_init(&music);
         }
 #endif
 #if 0

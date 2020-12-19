@@ -324,6 +324,9 @@ static int music_play_internal(void *m){
     music = m;
     cm = music->current;
     type = music->type;
+    pthread_mutex_lock(&lock);
+    g_music_play_type = type;
+    pthread_mutex_unlock(&lock);
 
     /*traverse the music list repeatly*/
     while(1){
@@ -335,7 +338,7 @@ static int music_play_internal(void *m){
         filename = music->list[cm];
         delayp = delayp_total = 0;
 
-        /*printf("filename:%s\n", filename);*/
+        printf("filename:%s, cm:%d\n", filename, cm);
         set_param(filename, &sp);
         if((file = fopen(filename, "rb")) == NULL){
             printf("open file failed, %s\n", strerror(errno));
@@ -465,6 +468,7 @@ next_file:
         type = g_music_play_type;
         pthread_mutex_unlock(&lock);
         cm = type_next_music(type, music_state, music->num-1, cm);
+        printf("type:%d\n", type);
     }
 }
 
@@ -564,6 +568,7 @@ static int music_copy(Music *music_dst, Music *music_src){
     }
     music_dst->type = music_src->type;
     music_dst->call = music_src->call;
+    music_dst->current = music_src->current;
 
     return 0;
 }
@@ -574,6 +579,7 @@ int music_init(Music* music){
 
     if(g_init_flag)
         return -1;
+    printf("music:%s,cmd:%d\n", music->list[0], music->current);
 
     if(music_copy(&g_music, music) != 0)
         return -1;
@@ -583,6 +589,7 @@ int music_init(Music* music){
         return -1;
     }
 
+    printf("g_music:%s,music:%s,cm:%d\n", g_music.list[0], music->list[0], music->current);
     if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, &g_music)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
@@ -708,6 +715,17 @@ int get_current_music(){
     pthread_mutex_unlock(&lock);
 
     return c;
+}
+
+int get_music_play_type(){
+
+    int type;
+
+    pthread_mutex_lock(&lock);
+    type = g_music_play_type;
+    pthread_mutex_unlock(&lock);
+
+    return type;
 }
 
 int music_speccify(int id){
