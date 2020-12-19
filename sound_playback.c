@@ -32,12 +32,13 @@ int g_music_play_type;
 int g_music_specific;
 
 typedef enum {
-    MUSIC_PAUSED = 0,
+    MUSIC_PREPARE= 0,
+    MUSIC_PAUSED,
     MUSIC_PLAYING,
     MUSIC_NEXT,
     MUSIC_PREVIOUS
 } MUSIC_STATE ;
-MUSIC_STATE g_music_state = 1;
+MUSIC_STATE g_music_state = 0;
 
 typedef struct{
     snd_pcm_t *pcm_handle;
@@ -247,7 +248,7 @@ static int next_music_random(MUSIC_STATE music_state,int num, int cm){
     int rd;
     random_init(music_state);
     while(1){
-        rd = max_index*random()/RAND_MAX;
+        rd = num*random()/RAND_MAX;
         if(rd != cm)
             return rd;
     }
@@ -274,7 +275,7 @@ static int next_music_sequence(MUSIC_STATE music_state,int max_index, int cm){
     return cm;
 }
 
-static int type_next_music(int type, MUSIC_STATE music_state, int num, int cm){
+static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int cm){
 
     int next_music;
     int music_specific;
@@ -289,15 +290,15 @@ static int type_next_music(int type, MUSIC_STATE music_state, int num, int cm){
 
     switch (type) {
         case PLAY_TYPE_RANDOM:
-            next_music = next_music_random(music_state, num, cm);
+            next_music = next_music_random(music_state, max_index+1, cm);
             break;
 
         case PLAY_TYPE_SINGLE:
-            next_music = next_music_single(music_state, num, cm);
+            next_music = next_music_single(music_state, max_index, cm);
             break;
 
         case PLAY_TYPE_SEQUENCE:
-            next_music = next_music_sequence(music_state, num, cm);
+            next_music = next_music_sequence(music_state, max_index, cm);
             break;
     }
 
@@ -330,6 +331,12 @@ static int music_play_internal(void *m){
     /*traverse the music list repeatly*/
     while(1){
 
+        music_state = music_state_check();
+        if(music_state == MUSIC_PREPARE){
+            sleep(1);
+            continue;
+        }
+
         if(music->call)
             music->call(cm);
 
@@ -340,6 +347,8 @@ static int music_play_internal(void *m){
         set_param(filename, &sp);
         if((file = fopen(filename, "rb")) == NULL){
             printf("open file failed, %s\n", strerror(errno));
+            music_state_set(MUSIC_PREPARE);
+            continue;
         }
         buff_size = sp.frames * sp.channels * 2;
         if((buff = malloc(buff_size)) == NULL){
@@ -465,8 +474,8 @@ next_file:
         pthread_mutex_lock(&lock);
         type = g_music_play_type;
         pthread_mutex_unlock(&lock);
-        cm = type_next_music(type, music_state, music->num, cm);
-        printf("type:%d\n", type);
+        cm = type_next_music(type, music_state, music->num-1, cm);
+        /*printf("type:%d\n", type);*/
     }
 }
 
@@ -665,8 +674,8 @@ int audio_destroy(){
 
 int music_pause(){
     pthread_mutex_lock(&lock);
-    if(g_music_state == MUSIC_PAUSED){
-        printf("Music player already paused.\n");
+    if(g_music_state != MUSIC_PLAYING){
+        printf("Music player not playing\n");
         pthread_mutex_unlock(&lock);
         return -1;
     }

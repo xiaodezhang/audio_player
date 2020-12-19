@@ -62,6 +62,7 @@ int main(int argc, char **argv) {
     /*music_play();*/
     int i= 0;
     while(++i){
+#if 0
         if(i == 10){
             music_specify(2);
             printf("2222222\n");
@@ -76,20 +77,28 @@ int main(int argc, char **argv) {
             printf("1515151515\n");
             printf("current music:%d\n", get_music_play_type());
         }
-#if 0
-        if(i == 30){
-            printf("202020202020\n");
-            music_pause();
-        }
-        if(i == 32){
-            printf("202020202020\n");
+#endif
+#if 1
+        if(i == 5){
+            printf("555555555555\n");
             music_play();
         }
-
-        if(i == 35){
-            printf("next\n");
-            music_next();
+        if(i == 8){
+            printf("8888888888888888888\n");
+            music_previous();
         }
+
+        if(i == 9){
+            printf("1212121212121212\n");
+            music_previous();
+        }
+
+        /*if(i == 35){*/
+            /*printf("next\n");*/
+            /*music_next();*/
+        /*}*/
+#endif
+#if 0
         if(i == 40){
             printf("next\n");
             music_next();
@@ -97,14 +106,12 @@ int main(int argc, char **argv) {
         if(i == 50){
             printf("5050505050\n");
             music_destory();
-#if 0
             free(music.list[1]);
             char *wav = "/home/zhang_xiaode/wav/3.wav";
             music.list[1] = malloc(strlen(wav)+1);
             strcpy(music.list[1], wav);
             music.current = 0;
             printf("music:%s\n", music.list[1]);
-#endif
             music_init(&music);
         }
 #endif
