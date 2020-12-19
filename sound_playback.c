@@ -234,19 +234,18 @@ static void current_music_set(int cm){
     pthread_mutex_unlock(&lock);
 }
 
-static void random_init(MUSIC_STATE music_state,int max_index, int cm){
+static void random_init(MUSIC_STATE music_state){
 
     struct timespec ttime = {0, 0};
     clock_gettime(CLOCK_MONOTONIC, &ttime);
     unsigned int seed = ttime.tv_sec+ttime.tv_nsec;
     srandom(seed);
-    /*return max_index*random()/RAND_MAX;*/
 }
 
-static int next_music_random(MUSIC_STATE music_state,int max_index, int cm){
+static int next_music_random(MUSIC_STATE music_state,int num, int cm){
 
     int rd;
-    random_init(music_state, max_index, cm);
+    random_init(music_state);
     while(1){
         rd = max_index*random()/RAND_MAX;
         if(rd != cm)
@@ -275,7 +274,7 @@ static int next_music_sequence(MUSIC_STATE music_state,int max_index, int cm){
     return cm;
 }
 
-static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int cm){
+static int type_next_music(int type, MUSIC_STATE music_state, int num, int cm){
 
     int next_music;
     int music_specific;
@@ -290,15 +289,15 @@ static int type_next_music(int type, MUSIC_STATE music_state, int max_index, int
 
     switch (type) {
         case PLAY_TYPE_RANDOM:
-            next_music = next_music_random(music_state, max_index, cm);
+            next_music = next_music_random(music_state, num, cm);
             break;
 
         case PLAY_TYPE_SINGLE:
-            next_music = next_music_single(music_state, max_index, cm);
+            next_music = next_music_single(music_state, num, cm);
             break;
 
         case PLAY_TYPE_SEQUENCE:
-            next_music = next_music_sequence(music_state, max_index, cm);
+            next_music = next_music_sequence(music_state, num, cm);
             break;
     }
 
@@ -466,7 +465,7 @@ next_file:
         pthread_mutex_lock(&lock);
         type = g_music_play_type;
         pthread_mutex_unlock(&lock);
-        cm = type_next_music(type, music_state, music->num-1, cm);
+        cm = type_next_music(type, music_state, music->num, cm);
         printf("type:%d\n", type);
     }
 }

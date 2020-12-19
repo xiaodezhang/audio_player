@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
         music.list[i] = malloc(strlen(file_list[i])+1);
         strcpy(music.list[i], file_list[i]);
     }
-    music.current = 1;
+    music.current = 2;
     /*music.type = PLAY_TYPE_SINGLE;*/
     music.type = PLAY_TYPE_SEQUENCE;
     /*music.type = PLAY_TYPE_RANDOM;*/
