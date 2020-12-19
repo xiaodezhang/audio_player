@@ -28,7 +28,7 @@ int music_previous();
 int get_current_music();
 int music_play_type(MUSIC_PLAY_TYPE type);
 int get_music_play_type();
-int music_speccify(int id);
+int music_specify(int id);
 
 //int update_music_list(const char** music_list, int num);
 

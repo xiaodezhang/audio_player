@@ -9,7 +9,7 @@ char *file_list[3] = {"/home/zhang_xiaode/ChillingMusic.wav"
 };
 void music_call(int cm){
 
-    printf("current music :%d\n", cm);
+    /*printf("current music :%d\n", cm);*/
 }
 
 
@@ -63,14 +63,17 @@ int main(int argc, char **argv) {
     int i= 0;
     while(++i){
         if(i == 10){
-            music_speccify(2);
+            music_specify(2);
+            printf("2222222\n");
             printf("current music:%d\n",get_current_music());
 
-            music_speccify(0);
+            music_specify(0);
+            printf("000000\n");
             printf("current music:%d\n",get_current_music());
         }
         if(i == 15){
             music_play_type(PLAY_TYPE_SINGLE);
+            printf("1515151515\n");
             printf("current music:%d\n", get_music_play_type());
         }
 #if 0

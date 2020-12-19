@@ -312,7 +312,7 @@ static int music_play_internal(void *m){
     int cm;  /*current music id*/
     int ret;
     char *filename;
-    snd_pcm_sframes_t delayp, delayp_total, pcm;
+    snd_pcm_sframes_t pcm;
     SoundParam sp;
     FILE *file;
     int buff_size;
@@ -331,12 +331,11 @@ static int music_play_internal(void *m){
     /*traverse the music list repeatly*/
     while(1){
 
-        current_music_set(cm);
         if(music->call)
             music->call(cm);
 
+        current_music_set(cm);
         filename = music->list[cm];
-        delayp = delayp_total = 0;
 
         printf("filename:%s, cm:%d\n", filename, cm);
         set_param(filename, &sp);
@@ -579,7 +578,6 @@ int music_init(Music* music){
 
     if(g_init_flag)
         return -1;
-    printf("music:%s,cmd:%d\n", music->list[0], music->current);
 
     if(music_copy(&g_music, music) != 0)
         return -1;
@@ -589,7 +587,6 @@ int music_init(Music* music){
         return -1;
     }
 
-    printf("g_music:%s,music:%s,cm:%d\n", g_music.list[0], music->list[0], music->current);
     if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, &g_music)) != 0){
         printf("create thread error:%s", strerror(errno));
         return -1;
@@ -728,10 +725,11 @@ int get_music_play_type(){
     return type;
 }
 
-int music_speccify(int id){
+int music_specify(int id){
 
     /*check whether id is in the list*/
     set_music_specific(id);
+    current_music_set(id);
     music_next();
     return 0;
 }
