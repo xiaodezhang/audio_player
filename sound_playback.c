@@ -7,6 +7,7 @@
 
 #include <alsa/asoundlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <pthread.h>
@@ -17,6 +18,13 @@
 #include "sound_playback.h"
 
 #define PCM_DEVICE "default"
+
+#define sp_dbg_defined 1
+#if sp_dbg_defined
+#define dbg printf
+#else
+#define dbg
+#endif
 
 int g_init_flag = 0;
 Music g_music;
@@ -37,8 +45,18 @@ typedef enum {
     MUSIC_PLAYING,
     MUSIC_NEXT,
     MUSIC_PREVIOUS
-} MUSIC_STATE ;
+} MUSIC_STATE;
 MUSIC_STATE g_music_state = 0;
+
+typedef enum {
+      AUDIO_INVALID = 0
+    , AUDIO_INIT
+    , AUDIO_PREPARE
+    , AUDIO_PLAYING
+    , AUDIO_DRAINING
+    , AUDIO_SETUP
+} AUDIO_STATE;
+volatile int g_audio_state = AUDIO_INVALID;
 
 typedef struct{
     snd_pcm_t *pcm_handle;
@@ -49,11 +67,11 @@ typedef struct{
 }SoundParam;
 
 typedef struct{
-    char filename[256];
-    AUDIO_FINISHED_CALLBACK call;
+    char filename[1024];
+    volatile int priority;
 } Audio;
 
-Audio g_audio = {{0}, NULL};
+Audio g_audio = {{0}, 100};
 
 /* wav音频头部格式 */
 typedef struct _wave_pcm_hdr
@@ -153,7 +171,7 @@ static int set_param(const char *filename, SoundParam* sp){
 
     seconds =  (chunk_size - 36) / avg_bytes_per_sec;
 
-    printf("rate:%d,channedls:%d, avg_bytes_per_sec:%d, seconds:%d\n"
+    dbg("rate:%d,channedls:%d, avg_bytes_per_sec:%d, seconds:%d\n"
             "bits_per_sample:%d,chunk_size:%d\n"
             , rate, channels, avg_bytes_per_sec, seconds, bits_per_sample, chunk_size);
     free(head);
@@ -162,7 +180,7 @@ static int set_param(const char *filename, SoundParam* sp){
 	/* Open the PCM device in playback mode */
 	if (pcm = snd_pcm_open(&pcm_handle, PCM_DEVICE,
 					SND_PCM_STREAM_PLAYBACK, 0) < 0) 
-		printf("ERROR: Can't open \"%s\" PCM device. %s\n",
+		dbg("ERROR: Can't open \"%s\" PCM device. %s\n",
 					PCM_DEVICE, snd_strerror(pcm));
 
 	/* Allocate parameters object and fill it with default values*/
@@ -173,39 +191,39 @@ static int set_param(const char *filename, SoundParam* sp){
 	/* Set parameters */
 	if (pcm = snd_pcm_hw_params_set_access(pcm_handle, params,
 					SND_PCM_ACCESS_RW_INTERLEAVED) < 0) 
-		printf("ERROR: Can't set interleaved mode. %s\n", snd_strerror(pcm));
+		dbg("ERROR: Can't set interleaved mode. %s\n", snd_strerror(pcm));
 
 	if (pcm = snd_pcm_hw_params_set_format(pcm_handle, params,
 						SND_PCM_FORMAT_S16_LE) < 0) 
-		printf("ERROR: Can't set format. %s\n", snd_strerror(pcm));
+		dbg("ERROR: Can't set format. %s\n", snd_strerror(pcm));
 
 	if (pcm = snd_pcm_hw_params_set_channels(pcm_handle, params, channels) < 0) 
-		printf("ERROR: Can't set channels number. %s\n", snd_strerror(pcm));
+		dbg("ERROR: Can't set channels number. %s\n", snd_strerror(pcm));
 
 	if (pcm = snd_pcm_hw_params_set_rate_near(pcm_handle, params, &rate, 0) < 0) 
-		printf("ERROR: Can't set rate. %s\n", snd_strerror(pcm));
+		dbg("ERROR: Can't set rate. %s\n", snd_strerror(pcm));
 
 	/* Write parameters */
 	if (pcm = snd_pcm_hw_params(pcm_handle, params) < 0)
-		printf("ERROR: Can't set harware parameters. %s\n", snd_strerror(pcm));
+		dbg("ERROR: Can't set harware parameters. %s\n", snd_strerror(pcm));
 
 	/* Resume information */
-	printf("PCM name: '%s'\n", snd_pcm_name(pcm_handle));
+	dbg("PCM name: '%s'\n", snd_pcm_name(pcm_handle));
 
-	printf("PCM state: %s\n", snd_pcm_state_name(snd_pcm_state(pcm_handle)));
+	dbg("PCM state: %s\n", snd_pcm_state_name(snd_pcm_state(pcm_handle)));
 
 	snd_pcm_hw_params_get_channels(params, &tmp);
-	printf("channels: %i ", tmp);
+	dbg("channels: %i ", tmp);
 
 	if (tmp == 1)
-		printf("(mono)\n");
+		dbg("(mono)\n");
 	else if (tmp == 2)
-		printf("(stereo)\n");
+		dbg("(stereo)\n");
 
 	snd_pcm_hw_params_get_rate(params, &tmp, 0);
-	printf("rate: %d bps\n", tmp);
+	dbg("rate: %d bps\n", tmp);
 
-	printf("seconds: %d\n", seconds);	
+	dbg("seconds: %d\n", seconds);	
 
 	/* Allocate buffer to hold single period */
 	snd_pcm_hw_params_get_period_size(params, &frames, 0);
@@ -217,8 +235,8 @@ static int set_param(const char *filename, SoundParam* sp){
     sp->pcm_handle = pcm_handle;
     sp->seconds = seconds;
     sp->avg_bytes_per_sec = avg_bytes_per_sec;
-    printf("set param, frames:%d\n", sp->frames);
-    printf("can pause:%d\n", snd_pcm_hw_params_can_pause(params));
+    dbg("set param, frames:%ld\n", sp->frames);
+    dbg("can pause:%d\n", snd_pcm_hw_params_can_pause(params));
 }
 
 static void music_state_set(MUSIC_STATE music_state){
@@ -307,7 +325,7 @@ end:
     return next_music;
 }
 
-static int music_play_internal(void *m){
+static void* music_play_internal(void *m){
 
     int cm;  /*current music id*/
     int ret;
@@ -343,16 +361,16 @@ static int music_play_internal(void *m){
         current_music_set(cm);
         filename = music->list[cm];
 
-        printf("filename:%s, cm:%d\n", filename, cm);
+        dbg("filename:%s, cm:%d\n", filename, cm);
         set_param(filename, &sp);
         if((file = fopen(filename, "rb")) == NULL){
-            printf("open file failed, %s\n", strerror(errno));
+            dbg("open file failed, %s\n", strerror(errno));
             music_state_set(MUSIC_PREPARE);
             continue;
         }
         buff_size = sp.frames * sp.channels * 2;
         if((buff = malloc(buff_size)) == NULL){
-            printf("memory error:%s\n", strerror(errno));
+            dbg("memory error:%s\n", strerror(errno));
             file_close(&file);
             exit(-1);
         }
@@ -364,7 +382,7 @@ static int music_play_internal(void *m){
                 /*drop all data, play the next music*/
                 ret = snd_pcm_drop(sp.pcm_handle);
                 if(ret != 0)
-                    printf("drop faild:%s\n", snd_strerror(ret));
+                    dbg("drop faild:%s\n", snd_strerror(ret));
                 music_state_set(MUSIC_PLAYING);
                 goto next_file;
 
@@ -374,7 +392,7 @@ static int music_play_internal(void *m){
                     && snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_PAUSED){
 
                 if((ret = snd_pcm_pause(sp.pcm_handle, 0)) != 0){
-                    printf("Pcm continue failed, %s\n", snd_strerror(ret));
+                    dbg("Pcm continue failed, %s\n", snd_strerror(ret));
                     /*! TODO: Todo description here
                      *  \todo Todo description here
                      */
@@ -384,7 +402,7 @@ static int music_play_internal(void *m){
             if(music_state == MUSIC_PAUSED){
                 if(snd_pcm_state(sp.pcm_handle) != SND_PCM_STATE_PAUSED){
                     if((ret = snd_pcm_pause(sp.pcm_handle, 1)) != 0){
-                        printf("Pcm pause failed, %s\n", snd_strerror(ret));
+                        dbg("Pcm pause failed, %s\n", snd_strerror(ret));
                         /*! TODO: Todo description here
                          *  \todo Todo description here
                          */
@@ -399,20 +417,20 @@ static int music_play_internal(void *m){
             size_t n = fread(buff, 1, buff_size, file);
             if(n != buff_size){
                 if(ferror(file) != 0){
-                    printf("read file error:%s\n", strerror(errno));
+                    dbg("read file error:%s\n", strerror(errno));
                 }
             }
 
-            /*printf("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));*/
+            /*dbg("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));*/
             /*write the date to the device*/
             if ((pcm = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
-                printf("XRUN.\n");
+                dbg("XRUN.\n");
                 snd_pcm_prepare(sp.pcm_handle);
             } else if (pcm < 0) {
-                printf("ERROR. Can't write to PCM device. %s\n", snd_strerror(pcm));
+                dbg("ERROR. Can't write to PCM device. %s\n", snd_strerror(pcm));
             }
             if(feof(file) != 0){
-                printf("eof\n");
+                dbg("eof\n");
                 break;
             }
         }
@@ -434,7 +452,7 @@ static int music_play_internal(void *m){
                 /*finished = 0;*/
                 /*goto next_file;*/
                 if((ret = snd_pcm_pause(sp.pcm_handle, 1)) != 0){
-                    printf("Pcm pause failed, %s\n", snd_strerror(ret));
+                    dbg("Pcm pause failed, %s\n", snd_strerror(ret));
                     /*! TODO: Todo description here
                      *  \todo Todo description here
                      */
@@ -447,7 +465,7 @@ static int music_play_internal(void *m){
                 /*finished = 0;*/
                 /*goto next_file;*/
                 if((ret = snd_pcm_pause(sp.pcm_handle, 0)) != 0){
-                    printf("Pcm continue failed, %s\n", snd_strerror(ret));
+                    dbg("Pcm continue failed, %s\n", snd_strerror(ret));
                     /*! TODO: Todo description here
                      *  \todo Todo description here
                      */
@@ -457,7 +475,7 @@ static int music_play_internal(void *m){
                 /*drop all data, play the next music*/
                 ret = snd_pcm_drop(sp.pcm_handle);
                 if(ret != 0)
-                    printf("drop faild:%s\n", snd_strerror(ret));
+                    dbg("drop faild:%s\n", snd_strerror(ret));
                 music_state_set(MUSIC_PLAYING);
                 goto next_file;
             }
@@ -475,82 +493,106 @@ next_file:
         type = g_music_play_type;
         pthread_mutex_unlock(&lock);
         cm = type_next_music(type, music_state, music->num-1, cm);
-        /*printf("type:%d\n", type);*/
+        /*dbg("type:%d\n", type);*/
     }
 }
 
-static void audio_write(void* arg){
+static void* audio_write(void* arg){
 
     SoundParam sp;
     int buff_size;
-    FILE *file;
-    char *buff;
+    FILE *file = NULL;
+    char *buff = NULL;
     snd_pcm_sframes_t pcm;
-
     Audio audio;
+    AUDIO_STATE state;
+    size_t n;
+    int ret;
 
+    sp.pcm_handle = NULL;
     while(1){
 
-        pthread_mutex_lock(&audio_lock);
-        strcpy(audio.filename, g_audio.filename);
-        audio.call = g_audio.call;
-        pthread_mutex_unlock(&audio_lock);
-
-        if(audio.filename[0] == 0) {
-            sleep(1);
-            continue;
-        }
-
-        set_param(audio.filename, &sp);
-
-        if((file = fopen(audio.filename, "rb")) == NULL){
-            printf("open file failed, %s\n", strerror(errno));
-        }
-        buff_size = sp.frames * sp.channels *2;
-        if((buff = malloc(buff_size)) == NULL){
-            printf("memory error:%s\n", strerror(errno));
-            file_close(&file);
-            exit(-1);
-        }
-
-        while(1){
-
-            /*we read the file data now*/
-            size_t n = fread(buff, 1, buff_size, file);
-            if(n != buff_size){
-                if(ferror(file) != 0){
-                    printf("read file error:%s\n", strerror(errno));
-                }
-            }
-
-            /*printf("PCM name: %s, state: %s\n", snd_pcm_name(sp.pcm_handle), snd_pcm_state_name(snd_pcm_state(sp.pcm_handle)));*/
-            /*write the date to the device*/
-            if ((pcm = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
-                printf("XRUN.\n");
-                snd_pcm_prepare(sp.pcm_handle);
-            } else if (pcm < 0) {
-                printf("ERROR. Can't write to PCM device. %s\n", snd_strerror(pcm));
-            }
-            if(feof(file) != 0){
-                printf("eof\n");
+        state = g_audio_state;
+        switch (state) {
+            case AUDIO_INIT:
+            case AUDIO_SETUP:
+                sleep(1);
                 break;
-            }
+            case AUDIO_PREPARE:
+                file_close(&file);
+                if(sp.pcm_handle){
+                    ret = snd_pcm_drop(sp.pcm_handle);
+                    if(ret != 0){
+                        dbg("Drop failed:%s\n", snd_strerror(ret));
+                    }
+                    snd_pcm_close(sp.pcm_handle);
+                    sp.pcm_handle = NULL;
+                }
+                if(buff){
+                    free(buff);
+                    buff = NULL;
+                }
+
+                pthread_mutex_lock(&audio_lock);
+                strcpy(audio.filename, g_audio.filename);
+                pthread_mutex_unlock(&audio_lock);
+                if((file = fopen(audio.filename, "rb")) == NULL){
+                    dbg("open file failed, %s\n", strerror(errno));
+                    g_audio_state = AUDIO_SETUP;
+                    break;
+                }
+                set_param(audio.filename, &sp);
+                buff_size = sp.frames * sp.channels *2;
+                if((buff = malloc(buff_size)) == NULL){
+                    dbg("memory error:%s\n", strerror(errno));
+                    file_close(&file);
+                    g_audio_state = AUDIO_SETUP;
+                    break;
+                }
+                g_audio_state = AUDIO_PLAYING;
+
+            case AUDIO_PLAYING:
+                /*we read the file data now*/
+                n = fread(buff, 1, buff_size, file);
+                if(n != buff_size){
+                    if(ferror(file) != 0){
+                        dbg("read file error:%s\n", strerror(errno));
+                        file_close(&file);
+                        free(buff);
+                        g_audio_state = AUDIO_SETUP;
+                        break;
+                    }
+                }
+                /*write the date to the device*/
+                if ((pcm = snd_pcm_writei(sp.pcm_handle, buff, sp.frames)) == -EPIPE) {
+                    dbg("XRUN.\n");
+                    snd_pcm_prepare(sp.pcm_handle);
+                } else if (pcm < 0) {
+                    dbg("ERROR. Can't write to PCM device. %s\n", snd_strerror(pcm));
+                    file_close(&file);
+                    free(buff);
+                    g_audio_state = AUDIO_SETUP;
+                    break;
+                }
+                if(feof(file) != 0){
+                    dbg("eof\n");
+                    g_audio_state = AUDIO_DRAINING;
+                }
+                break;
+
+            case AUDIO_DRAINING:
+                if(snd_pcm_avail(sp.pcm_handle) < 0){
+                    file_close(&file);
+                    snd_pcm_close(sp.pcm_handle);
+                    sp.pcm_handle = NULL;
+                    free(buff);
+                    buff = NULL;
+                    g_audio_state = AUDIO_SETUP;
+                    break;
+                }
+                sleep(1);
+                break;
         }
-
-        snd_pcm_drain(sp.pcm_handle);
-
-        file_close(&file);
-        snd_pcm_close(sp.pcm_handle);
-        free(buff);
-
-        pthread_mutex_lock(&audio_lock);
-        g_audio.filename[0] = 0;
-        g_audio.call = NULL;
-        pthread_mutex_unlock(&audio_lock);
-
-        if(audio.call)
-            audio.call();
-
     }
 }
 
@@ -562,13 +604,13 @@ static int music_copy(Music *music_dst, Music *music_src){
     music_dst->num = music_src->num;
     music_dst->list = malloc(sizeof(char*)*music_src->num);
     if(!music_dst->list){
-        printf("memory error, %s", strerror(errno));
+        dbg("memory error, %s", strerror(errno));
         exit(-1);
     }
     for (int i = 0; i < music_dst->num; i++) {
         music_dst->list[i] = malloc(strlen(music_src->list[i])+1);
         if(!music_dst->list[i]){
-            printf("memory error, %s", strerror(errno));
+            dbg("memory error, %s", strerror(errno));
             exit(-1);
         }
         strcpy(music_dst->list[i], music_src->list[i]);
@@ -591,12 +633,12 @@ int music_init(Music* music){
         return -1;
 
     if(pthread_mutex_init(&lock, NULL) != 0){
-        printf("mutex init failed\n");
+        dbg("mutex init failed\n");
         return -1;
     }
 
-    if((ret = pthread_create(&g_music_pt, NULL,music_play_internal, &g_music)) != 0){
-        printf("create thread error:%s", strerror(errno));
+    if((ret = pthread_create(&g_music_pt, NULL,music_play_internal,(void*) &g_music)) != 0){
+        dbg("create thread error:%s", strerror(errno));
         return -1;
     }
     return 0;
@@ -637,13 +679,28 @@ int music_play_type(MUSIC_PLAY_TYPE type){
     return 0;
 }
 
-int audio_play(const char *filename, AUDIO_FINISHED_CALLBACK call){
+int audio_play(const char *filename, int priority){
 
+    AUDIO_STATE state;
+
+    state = g_audio_state;
+
+    if(state == AUDIO_INVALID){
+        dbg("Audio player not init.\n");
+        return -2;
+    }
+
+    if(priority > g_audio.priority){
+        dbg("With low priority, be ignored\n");
+        return AUDIO_LOW_PRIORITY;
+    }
 
     pthread_mutex_lock(&audio_lock);
-    strcpy(&(g_audio.filename), filename);
-    g_audio.call = call;
+    strcpy(g_audio.filename, filename);
     pthread_mutex_unlock(&audio_lock);
+
+    g_audio.priority = priority;
+    g_audio_state = AUDIO_PREPARE;
 
     return 0;
 }
@@ -652,14 +709,18 @@ int audio_init(){
 
     int ret;
 
-
+    if(g_audio_state != AUDIO_INVALID){
+        dbg("Audio player already init\n");
+        return -1;
+    }
+    g_audio_state = AUDIO_INIT;
     if(pthread_mutex_init(&audio_lock, NULL) != 0){
-        printf("mutex init failed\n");
+        dbg("mutex init failed\n");
         return -1;
     }
 
     if((ret = pthread_create(&g_audio_pt, NULL, audio_write, NULL)) != 0){
-        printf("create thread error:%s", strerror(errno));
+        dbg("create thread error:%s", strerror(errno));
         return -1;
     }
     return 0;
@@ -675,7 +736,7 @@ int audio_destroy(){
 int music_pause(){
     pthread_mutex_lock(&lock);
     if(g_music_state != MUSIC_PLAYING){
-        printf("Music player not playing\n");
+        dbg("Music player not playing\n");
         pthread_mutex_unlock(&lock);
         return -1;
     }
@@ -688,7 +749,7 @@ int music_play(){
 
     pthread_mutex_lock(&lock);
     if(g_music_state ==MUSIC_PLAYING){
-        printf("Music playing.\n");
+        dbg("Music playing.\n");
         pthread_mutex_unlock(&lock);
         return -1;
     }

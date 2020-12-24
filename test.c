@@ -1,11 +1,13 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "sound_playback.h"
 
 char *file_list[3] = {"/home/zhang_xiaode/ChillingMusic.wav"
     , "/home/zhang_xiaode/tts_sample.wav"
-        , "/home/zhang_xiaode/wav/4.wav"
+        , "/home/zhang_xiaode/wav/06.城里的月光.wav"
 };
 void music_call(int cm){
 
@@ -17,20 +19,31 @@ void callback(){
     printf("call back\n");
 }
 void audio_call(){
-    audio_play(file_list[2], callback);
+
 }
 
 void test_audio_play(){
 
+    int i = 0;
 
     audio_init();
-    audio_play(file_list[1], audio_call);
-    while(1) sleep(1);
+    audio_play(file_list[2], 50);
+    while(++i){
+        if(i == 3){
+            printf("3333333\n");
+            audio_play(file_list[0], 49);
+        }
+        if(i == 5){
+            printf("55555\n");
+            audio_play(file_list[2], 51);
+        }
+        sleep(1);
+    } 
 }
 
 int main(int argc, char **argv) {
 
-#if 0
+#if 1
     test_audio_play();
     return 0;
 #endif
@@ -61,6 +74,7 @@ int main(int argc, char **argv) {
     /*}*/
     /*music_play();*/
     int i= 0;
+    music_play();
     while(++i){
 #if 0
         if(i == 10){
@@ -78,7 +92,7 @@ int main(int argc, char **argv) {
             printf("current music:%d\n", get_music_play_type());
         }
 #endif
-#if 1
+#if 0
         if(i == 5){
             printf("555555555555\n");
             music_play();

@@ -1,6 +1,8 @@
 #ifndef SOUND_PLAYBACK_H
 #define SOUND_PLAYBACK_H
 
+#define AUDIO_LOW_PRIORITY -1;
+
 typedef enum{ 
     PLAY_TYPE_RANDOM = 0,
     PLAY_TYPE_SEQUENCE,
@@ -36,7 +38,7 @@ void volume_init(int volume);
 void toggle_volume(int volume);
 
 int audio_init();
-int audio_play(const char *filename, AUDIO_FINISHED_CALLBACK call);
+int audio_play(const char *filename, int priority);
 int audio_destroy();
 
 #endif
