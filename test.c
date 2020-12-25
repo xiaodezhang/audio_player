@@ -32,11 +32,24 @@ void test_audio_play(){
         if(i == 3){
             printf("3333333\n");
             audio_play(file_list[0], 49);
+            audio_play(file_list[1], 49);
         }
+        if(i == 4){
+            printf("444444\n");
+            audio_play(file_list[1], 49);
+        }
+#if 1
         if(i == 5){
             printf("55555\n");
             audio_play(file_list[2], 51);
         }
+        if(i == 8){
+            printf("888888\n");
+            audio_destroy();
+            audio_init();
+            audio_play(file_list[1], 50);
+        }
+#endif
         sleep(1);
     } 
 }

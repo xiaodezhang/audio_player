@@ -49,12 +49,16 @@ typedef enum {
 MUSIC_STATE g_music_state = 0;
 
 typedef enum {
-      AUDIO_INVALID = 0
+      AUDIO_INVALID
+    , AUDIO_RESUME
+    , AUDIO_PAUSE
+    , AUDIO_NEXT
     , AUDIO_INIT
+    , AUDIO_SETUP
     , AUDIO_PREPARE
     , AUDIO_PLAYING
     , AUDIO_DRAINING
-    , AUDIO_SETUP
+    , AUDIO_PAUSED
 } AUDIO_STATE;
 volatile int g_audio_state = AUDIO_INVALID;
 
@@ -506,6 +510,7 @@ static void* audio_write(void* arg){
     snd_pcm_sframes_t pcm;
     Audio audio;
     AUDIO_STATE state;
+    snd_pcm_state_t pcm_state;
     size_t n;
     int ret;
 
@@ -516,9 +521,87 @@ static void* audio_write(void* arg){
         switch (state) {
             case AUDIO_INIT:
             case AUDIO_SETUP:
+            case AUDIO_PAUSED:
                 sleep(1);
                 break;
-            case AUDIO_PREPARE:
+
+            case AUDIO_RESUME:
+                if(snd_pcm_state(sp.pcm_handle) == SND_PCM_STATE_PAUSED){
+                    if((ret = snd_pcm_pause(sp.pcm_handle, 0)) != 0){
+                        dbg("Pcm resume failed, %s\n", snd_strerror(ret));
+                        file_close(&file);
+                        snd_pcm_close(sp.pcm_handle);
+                        sp.pcm_handle = NULL;
+                        free(buff);
+                        buff = NULL;
+                        g_audio_state = AUDIO_SETUP;
+                        break;
+                    }
+                    if(file){
+                        if(feof(file) != 0){
+                            g_audio_state = AUDIO_DRAINING;
+                        }else{
+                            g_audio_state = AUDIO_PLAYING;
+                        }
+                    }else{
+                        /*! TODO: Todo description here
+                         *  \todo Todo description here
+                         */
+                    }
+                }else{
+                    dbg("Error:resume from a not-paused state.\n");
+                    file_close(&file);
+                    if(sp.pcm_handle){
+                        ret = snd_pcm_drop(sp.pcm_handle);
+                        if(ret != 0){
+                            dbg("Drop failed:%s\n", snd_strerror(ret));
+                        }
+                        snd_pcm_close(sp.pcm_handle);
+                        sp.pcm_handle = NULL;
+                    }
+                    if(buff){
+                        free(buff);
+                        buff = NULL;
+                    }
+                    g_audio_state = AUDIO_SETUP;
+                }
+                break;
+
+            case AUDIO_PAUSE:
+                pcm_state = snd_pcm_state(sp.pcm_handle);
+                if(pcm_state == SND_PCM_STATE_RUNNING
+                        || pcm_state == SND_PCM_STATE_DRAINING){
+                    if((ret = snd_pcm_pause(sp.pcm_handle, 1)) != 0){
+                        dbg("Pcm pause failed, %s\n", snd_strerror(ret));
+                        file_close(&file);
+                        snd_pcm_close(sp.pcm_handle);
+                        sp.pcm_handle = NULL;
+                        free(buff);
+                        buff = NULL;
+                        g_audio_state = AUDIO_SETUP;
+                        break;
+                    }
+                    g_audio_state = AUDIO_PAUSED;
+                }else{
+                    dbg("Error:Pause from a not-RUNNING state.\n");
+                    file_close(&file);
+                    if(sp.pcm_handle){
+                        ret = snd_pcm_drop(sp.pcm_handle);
+                        if(ret != 0){
+                            dbg("Drop failed:%s\n", snd_strerror(ret));
+                        }
+                        snd_pcm_close(sp.pcm_handle);
+                        sp.pcm_handle = NULL;
+                    }
+                    if(buff){
+                        free(buff);
+                        buff = NULL;
+                    }
+                    g_audio_state = AUDIO_SETUP;
+                }
+                break;
+
+            case AUDIO_NEXT:
                 file_close(&file);
                 if(sp.pcm_handle){
                     ret = snd_pcm_drop(sp.pcm_handle);
@@ -532,7 +615,9 @@ static void* audio_write(void* arg){
                     free(buff);
                     buff = NULL;
                 }
+                g_audio_state = AUDIO_PREPARE;
 
+            case AUDIO_PREPARE:
                 pthread_mutex_lock(&audio_lock);
                 strcpy(audio.filename, g_audio.filename);
                 pthread_mutex_unlock(&audio_lock);
@@ -544,7 +629,7 @@ static void* audio_write(void* arg){
                 set_param(audio.filename, &sp);
                 buff_size = sp.frames * sp.channels *2;
                 if((buff = malloc(buff_size)) == NULL){
-                    dbg("memory error:%s\n", strerror(errno));
+                    dbg("Memory error:%s\n", strerror(errno));
                     file_close(&file);
                     g_audio_state = AUDIO_SETUP;
                     break;
@@ -556,7 +641,7 @@ static void* audio_write(void* arg){
                 n = fread(buff, 1, buff_size, file);
                 if(n != buff_size){
                     if(ferror(file) != 0){
-                        dbg("read file error:%s\n", strerror(errno));
+                        dbg("Read file error:%s\n", strerror(errno));
                         file_close(&file);
                         free(buff);
                         g_audio_state = AUDIO_SETUP;
@@ -592,8 +677,27 @@ static void* audio_write(void* arg){
                 }
                 sleep(1);
                 break;
+
+            case AUDIO_INVALID:
+                file_close(&file);
+                if(sp.pcm_handle){
+                    ret = snd_pcm_drop(sp.pcm_handle);
+                    if(ret != 0){
+                        dbg("Drop failed:%s\n", snd_strerror(ret));
+                    }
+                    snd_pcm_close(sp.pcm_handle);
+                    sp.pcm_handle = NULL;
+                }
+                if(buff){
+                    free(buff);
+                    buff = NULL;
+                }
+                goto exit;
         }
     }
+
+exit:
+    dbg("exit\n");
 }
 
 static int music_copy(Music *music_dst, Music *music_src){
@@ -681,28 +785,53 @@ int music_play_type(MUSIC_PLAY_TYPE type){
 
 int audio_play(const char *filename, int priority){
 
-    AUDIO_STATE state;
+    int ret = 0;
 
-    state = g_audio_state;
-
-    if(state == AUDIO_INVALID){
-        dbg("Audio player not init.\n");
-        return -2;
+    if(!filename){
+        dbg("File name is invalid.\n");
+        /*! TODO: error code definition
+         */
+        return -3;
     }
 
-    if(priority > g_audio.priority){
-        dbg("With low priority, be ignored\n");
-        return AUDIO_LOW_PRIORITY;
+    switch (g_audio_state) {
+        case AUDIO_INVALID:
+            dbg("Audio player not init.\n");
+            ret = -2;
+            break;
+
+        case AUDIO_INIT:
+        case AUDIO_SETUP:
+            pthread_mutex_lock(&audio_lock);
+            strcpy(g_audio.filename, filename);
+            pthread_mutex_unlock(&audio_lock);
+            g_audio.priority = priority;
+            g_audio_state = AUDIO_PREPARE;
+            break;
+
+        case AUDIO_PREPARE:
+        case AUDIO_PLAYING:
+        case AUDIO_DRAINING:
+        case AUDIO_PAUSED:
+            if(priority > g_audio.priority){
+                dbg("With low priority, be ignored\n");
+                ret = AUDIO_LOW_PRIORITY;
+                break;
+            }
+            pthread_mutex_lock(&audio_lock);
+            strcpy(g_audio.filename, filename);
+            pthread_mutex_unlock(&audio_lock);
+            g_audio.priority = priority;
+            g_audio_state = AUDIO_NEXT;
+            break;
+
+        default:
+            dbg("The previous command have not finished.\n");
+            ret = -4;
+            break;
     }
 
-    pthread_mutex_lock(&audio_lock);
-    strcpy(g_audio.filename, filename);
-    pthread_mutex_unlock(&audio_lock);
-
-    g_audio.priority = priority;
-    g_audio_state = AUDIO_PREPARE;
-
-    return 0;
+    return ret;
 }
 
 int audio_init(){
@@ -714,6 +843,9 @@ int audio_init(){
         return -1;
     }
     g_audio_state = AUDIO_INIT;
+    memset(g_audio.filename, 0, 1024);
+    g_audio.priority = 100;
+
     if(pthread_mutex_init(&audio_lock, NULL) != 0){
         dbg("mutex init failed\n");
         return -1;
@@ -728,8 +860,14 @@ int audio_init(){
 
 int audio_destroy(){
 
+    if(g_audio_state == AUDIO_INVALID){
+        dbg("Audio player not init\n");
+        return -1;
+    }
+    g_audio_state = AUDIO_INVALID;
+    pthread_join(g_audio_pt, NULL);
     pthread_mutex_destroy(&audio_lock);
-    pthread_cancel(g_audio_pt);
+
     return 0;
 }
 
@@ -846,4 +984,11 @@ void toggle_volume(int volume){
 void volume_init(int volume){
     SetAlsaMasterVolume(volume);
     g_volume = volume;
+}
+
+
+int music_init_wrapper(){
+
+    return 0;
+
 }
